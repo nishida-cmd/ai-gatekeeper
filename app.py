@@ -90,4 +90,29 @@ if uploaded_file is not None:
             - 音声はチェック不要です（無音コンテンツのため）。視覚情報のみで判断してください。
             - ナレッジベースに記載されたルール違反を徹底的に抽出してください。
 
-            ■
+            ■ナレッジベース
+            {current_knowledge}
+
+            ■出力形式
+            以下のMarkdownテーブル形式のみで出力してください。
+            
+            | タイムコード | 判定(NG/注意) | 指摘内容 | 該当ナレッジ |
+            | :--- | :--- | :--- | :--- |
+            """
+
+            response = model.generate_content([video_file, prompt])
+            
+            # 6. 結果表示
+            progress_bar.progress(100)
+            status_text.text("完了")
+            
+            st.divider()
+            st.subheader("📊 解析レポート")
+            st.markdown(response.text)
+
+            # ファイル削除
+            genai.delete_file(video_file.name)
+            os.remove(temp_file_path)
+
+        except Exception as e:
+            st.error(f"システムエラーが発生しました: {e}")
