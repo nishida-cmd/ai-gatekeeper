@@ -15,11 +15,11 @@ def load_knowledge_base():
         return "エラー：knowledge_base.txt が見つかりません。"
 
 # ページ設定
-st.set_page_config(page_title="AI Quality Gatekeeper", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="TTV Quality Gatekeeper", page_icon="🛡️", layout="wide")
 
 # タイトル
-st.title("🛡️ AI Quality Gatekeeper (Flash Latest)")
-st.info("Googleの最新安定版モデル(Gemini Flash Latest)を使用しています。")
+st.title("TTV Quality Gatekeeper")
+st.info("TTVの最新危機管理規定に基き動画をチェックします")
 
 # サイドバー：認証設定
 with st.sidebar:
@@ -36,7 +36,7 @@ with st.sidebar:
     st.divider()
     
     # 現在のルールを表示
-    with st.expander("現在のチェックルールを確認"):
+    with st.expander("現在の最新危機管理規定を確認"):
         knowledge_text = load_knowledge_base()
         st.text(knowledge_text)
 
@@ -46,7 +46,7 @@ uploaded_file = st.file_uploader("チェックする動画ファイル (MP4) を
 if uploaded_file is not None:
     st.video(uploaded_file)
     
-    if st.button("🚀 AI品質チェックを実行する", type="primary"):
+    if st.button("品質チェックを実行する", type="primary"):
         status_text = st.empty()
         progress_bar = st.progress(0)
 
