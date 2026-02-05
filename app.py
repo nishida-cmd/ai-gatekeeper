@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+from google.api_core import exceptions
 import time
 import os
 
@@ -17,8 +18,8 @@ def load_knowledge_base():
 st.set_page_config(page_title="AI Quality Gatekeeper", page_icon="🛡️", layout="wide")
 
 # タイトル
-st.title("🛡️ AI Quality Gatekeeper (Gemini 2.0)")
-st.info("最新の Gemini 2.0 Flash モデルを使用して動画品質をチェックします。")
+st.title("🛡️ AI Quality Gatekeeper (Flash Latest)")
+st.info("Googleの最新安定版モデル(Gemini Flash Latest)を使用しています。")
 
 # サイドバー：認証設定
 with st.sidebar:
@@ -61,26 +62,26 @@ if uploaded_file is not None:
                 f.write(uploaded_file.getbuffer())
 
             # 3. Google AIサーバーへアップロード
-            status_text.text("AIエンジン(Gemini 2.0)へ転送中...")
+            status_text.text("AIエンジンへ転送中...")
             progress_bar.progress(30)
             video_file = genai.upload_file(path=temp_file_path)
 
             # 4. 処理待ち
             while video_file.state.name == "PROCESSING":
                 status_text.text("映像処理中... (数分かかる場合があります)")
-                time.sleep(2) # 待機時間を短縮
+                time.sleep(2)
                 video_file = genai.get_file(video_file.name)
 
             if video_file.state.name == "FAILED":
                 st.error("動画処理に失敗しました。")
                 st.stop()
 
-            # 5. 解析実行
+            # 5. 解析実行（ここからリトライ機能）
             status_text.text("ナレッジベースと照合中...")
-            progress_bar.progress(70)
+            progress_bar.progress(60)
             
-            # ★ここで診断結果にあった「gemini-2.0-flash」を指定！
-            model = genai.GenerativeModel(model_name="gemini-2.0-flash")
+            # 診断リストにあった安定版モデルを指定
+            model = genai.GenerativeModel(model_name="gemini-flash-latest")
             
             prompt = f"""
             あなたは放送局の厳格な品質管理AIです。
@@ -100,7 +101,16 @@ if uploaded_file is not None:
             | :--- | :--- | :--- | :--- |
             """
 
-            response = model.generate_content([video_file, prompt])
+            # --- リトライロジック ---
+            try:
+                response = model.generate_content([video_file, prompt])
+            except exceptions.ResourceExhausted:
+                # 429エラーが出たらここに来る
+                status_text.warning("⚠️ アクセス集中(Quota)のため、30秒待機してから再試行します...")
+                time.sleep(30) # 30秒待つ
+                status_text.text("再試行中...")
+                response = model.generate_content([video_file, prompt]) # もう一度トライ
+            # ---------------------
             
             # 6. 結果表示
             progress_bar.progress(100)
