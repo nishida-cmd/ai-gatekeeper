@@ -1,119 +1,36 @@
 import streamlit as st
 import google.generativeai as genai
-import time
-import os
 
-# ---------------------------------------------------------
-# ナレッジベース読み込み関数
-# GitHub上の knowledge_base.txt を読み込みます
-# ---------------------------------------------------------
-def load_knowledge_base():
-    try:
-        # ファイルが存在するか確認し、読み込む
-        with open("knowledge_base.txt", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "エラー：knowledge_base.txt が見つかりません。"
+st.title("🔧 AIモデル接続診断")
 
-# ページ設定
-st.set_page_config(page_title="AI Quality Gatekeeper", page_icon="🛡️", layout="wide")
+# 1. APIキーの読み込み確認
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+    st.success("✅ APIキーは正常に読み込まれています")
+    genai.configure(api_key=api_key)
+except Exception as e:
+    st.error(f"❌ APIキーの設定エラー: {e}")
+    st.stop()
 
-# タイトルと説明
-st.title("🛡️ AI Quality Gatekeeper (Prototype)")
-st.info("GitHub上のルールファイル(knowledge_base.txt)に基づき、動画品質をチェックします。")
+# 2. 利用可能なモデル一覧を取得
+st.write("Googleサーバーに問い合わせ中...")
 
-# サイドバー：認証設定とルール確認
-with st.sidebar:
-    st.header("認証設定")
-    user_password = st.text_input("アクセスキーを入力", type="password")
+try:
+    models = genai.list_models()
+    available_models = []
     
-    if user_password != st.secrets["APP_PASSWORD"]:
-        st.warning("⚠️ 正しいアクセスキーを入力してください")
-        st.stop()
-    
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    st.success("認証成功")
-    
-    st.divider()
-    
-    # 現在のルールを表示（確認用）
-    with st.expander("現在のチェックルールを確認"):
-        knowledge_text = load_knowledge_base()
-        st.text(knowledge_text)
-
-# メインエリア：ファイルアップロード
-uploaded_file = st.file_uploader("チェックする動画ファイル (MP4) をアップロード", type=["mp4", "mov"])
-
-if uploaded_file is not None:
-    st.video(uploaded_file)
-    
-    if st.button("🚀 AI品質チェックを実行する", type="primary"):
-        status_text = st.empty()
-        progress_bar = st.progress(0)
-
-        try:
-            # 1. ルールファイルの読み込み
-            current_knowledge = load_knowledge_base()
+    st.markdown("### 📋 あなたの環境で使えるモデル一覧")
+    for m in models:
+        # 動画やテキスト生成ができるモデルだけを表示
+        if 'generateContent' in m.supported_generation_methods:
+            st.code(f"モデル名: {m.name}")
+            available_models.append(m.name)
             
-            # 2. 動画の一時保存
-            status_text.text("動画を読み込んでいます...")
-            progress_bar.progress(10)
-            temp_file_path = "temp_video.mp4"
-            with open(temp_file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+    if not available_models:
+        st.error("⚠️ 利用可能なモデルが1つも見つかりませんでした。APIキーの権限を確認してください。")
+    else:
+        st.success(f"🎉 {len(available_models)} 個のモデルが見つかりました！")
+        st.info("上記リストの中にある `models/gemini-1.5-flash-001` などの名前をメモしてください。")
 
-            # 3. Google AIサーバーへアップロード
-            status_text.text("AIエンジンへ転送中...")
-            progress_bar.progress(30)
-            video_file = genai.upload_file(path=temp_file_path)
-
-            # 4. 処理待ち
-            while video_file.state.name == "PROCESSING":
-                status_text.text("映像処理中... (数分かかる場合があります)")
-                time.sleep(5)
-                video_file = genai.get_file(video_file.name)
-
-            if video_file.state.name == "FAILED":
-                st.error("動画処理に失敗しました。")
-                st.stop()
-
-            # 5. 解析実行
-            status_text.text("ナレッジベースと照合中...")
-            progress_bar.progress(70)
-            
-            model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
-            
-            prompt = f"""
-            あなたは放送局の厳格な品質管理AIです。
-            以下の「ナレッジベース（ルール）」に基づき、アップロードされた動画の映像・テロップを解析してください。
-            
-            ■前提条件
-            - 音声はチェック不要です（無音コンテンツのため）。視覚情報のみで判断してください。
-            - ナレッジベースに記載されたルール違反を徹底的に抽出してください。
-
-            ■ナレッジベース
-            {current_knowledge}
-
-            ■出力形式
-            以下のMarkdownテーブル形式のみで出力してください。
-            
-            | タイムコード | 判定(NG/注意) | 指摘内容 | 該当ナレッジ |
-            | :--- | :--- | :--- | :--- |
-            """
-
-            response = model.generate_content([video_file, prompt])
-            
-            # 6. 結果表示
-            progress_bar.progress(100)
-            status_text.text("完了")
-            
-            st.divider()
-            st.subheader("📊 解析レポート")
-            st.markdown(response.text)
-
-            # ファイル削除
-            genai.delete_file(video_file.name)
-            os.remove(temp_file_path)
-
-        except Exception as e:
-            st.error(f"システムエラーが発生しました: {e}")
+except Exception as e:
+    st.error(f"❌ サーバー通信エラー: {e}")
