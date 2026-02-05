@@ -81,7 +81,7 @@ if uploaded_file is not None:
             status_text.text("ナレッジベースと照合中...")
             progress_bar.progress(70)
             
-            model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+            model = genai.GenerativeModel(model_name="gemini-1.5-flash-latest")
             
             prompt = f"""
             あなたは放送局の厳格な品質管理AIです。
