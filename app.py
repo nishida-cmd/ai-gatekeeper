@@ -1,12 +1,15 @@
 import streamlit as st
 import google.generativeai as genai
 from google.api_core import exceptions
+from PIL import Image
 import time
 import os
 
 # ---------------------------------------------------------
-# ナレッジベース読み込み関数
+# 設定・関数定義
 # ---------------------------------------------------------
+st.set_page_config(page_title="TTV Quality Gatekeeper", page_icon="🛡️", layout="wide")
+
 def load_knowledge_base():
     try:
         with open("knowledge_base.txt", "r", encoding="utf-8") as f:
@@ -14,120 +17,209 @@ def load_knowledge_base():
     except FileNotFoundError:
         return "エラー：knowledge_base.txt が見つかりません。"
 
-# ページ設定
-st.set_page_config(page_title="TTV Quality Gatekeeper", page_icon="🛡️", layout="wide")
-
-# タイトル
-st.title("TTV Quality Gatekeeper")
-st.info("""
-TTVの最新危機管理規定に基き動画をチェックします。
-
-※本ツールは過去の事例やナレッジに基づき、リスク要因を抽出・提示する支援ツールです。
-最終的な公開可否の判断は必ず人間の目視によって行ってください。
-""")
-
-# サイドバー：認証設定
+# ---------------------------------------------------------
+# サイドバー：認証 & 設定
+# ---------------------------------------------------------
 with st.sidebar:
     st.header("認証設定")
-    user_password = st.text_input("アクセスキーを入力", type="password")
-    
+    user_password = st.text_input("アクセスキー", type="password")
     if user_password != st.secrets["APP_PASSWORD"]:
-        st.warning("⚠️ 正しいアクセスキーを入力してください")
+        st.warning("⚠️ 正しいキーを入力してください")
         st.stop()
     
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     st.success("認証成功")
     
     st.divider()
+    with st.expander("現在のチェックルール"):
+        st.text(load_knowledge_base())
     
-    # 現在のルールを表示
-    with st.expander("現在の最新危機管理規定を確認"):
-        knowledge_text = load_knowledge_base()
-        st.text(knowledge_text)
+    # 履歴クリアボタン（チャット用）
+    if st.button("🗑️ チャット履歴を消去"):
+        st.session_state.messages = []
+        st.rerun()
 
-# メインエリア：ファイルアップロード
-uploaded_file = st.file_uploader("チェックする動画ファイル (MP4) をアップロード", type=["mp4", "mov"])
+# ---------------------------------------------------------
+# メイン画面：タブ切り替え
+# ---------------------------------------------------------
+st.title("🛡️ TTV Quality Gatekeeper")
+st.info("""
+TTVの最新危機管理規定に基き、動画・画像のチェックおよびコンプライアンス相談を行います。
+※AIの判定は支援情報です。最終判断は必ず人間が行ってください。
+""")
 
-if uploaded_file is not None:
-    st.video(uploaded_file)
-    
-    if st.button("品質チェックを実行する", type="primary"):
-        status_text = st.empty()
-        progress_bar = st.progress(0)
+# タブの作成
+tab1, tab2 = st.tabs(["📁 素材チェック (動画/画像)", "💬 コンプラ相談チャット"])
 
-        try:
-            # 1. ルールファイルの読み込み
-            current_knowledge = load_knowledge_base()
+# =========================================================
+# タブ1：素材チェック機能 (動画 & 画像)
+# =========================================================
+with tab1:
+    st.subheader("メディア品質チェック")
+    uploaded_file = st.file_uploader(
+        "チェックしたいファイル (MP4, MOV, JPG, PNG) をアップロード", 
+        type=["mp4", "mov", "jpg", "jpeg", "png", "webp"]
+    )
+
+    if uploaded_file is not None:
+        file_type = uploaded_file.type
+        
+        # --- 画像の場合 ---
+        if "image" in file_type:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="アップロードされた画像", use_column_width=True)
             
-            # 2. 動画の一時保存
-            status_text.text("動画を読み込んでいます...")
-            progress_bar.progress(10)
-            temp_file_path = "temp_video.mp4"
-            with open(temp_file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            if st.button("🚀 画像チェックを実行", type="primary"):
+                with st.spinner("画像内の文字と描写を解析中..."):
+                    try:
+                        current_knowledge = load_knowledge_base()
+                        model = genai.GenerativeModel(model_name="gemini-flash-latest")
+                        
+                        prompt = f"""
+                        あなたはTTVの厳格な校閲・コンプライアンス担当AIです。
+                        以下のナレッジベースに基づき、画像内の「文字（テロップ）」と「描写」をチェックしてください。
 
-            # 3. Google AIサーバーへアップロード
-            status_text.text("AIエンジンへ転送中...")
-            progress_bar.progress(30)
-            video_file = genai.upload_file(path=temp_file_path)
+                        ■チェック項目
+                        1. 誤字脱字、常用漢字以外の使用（「苺」「綺麗」など）
+                        2. 不適切な画像表現、リスクのある映り込み
+                        3. その他ナレッジベースへの違反
 
-            # 4. 処理待ち
-            while video_file.state.name == "PROCESSING":
-                status_text.text("映像処理中... (数分かかる場合があります)")
-                time.sleep(2)
-                video_file = genai.get_file(video_file.name)
+                        ■ナレッジベース
+                        {current_knowledge}
 
-            if video_file.state.name == "FAILED":
-                st.error("動画処理に失敗しました。")
-                st.stop()
+                        ■出力
+                        問題点のみを箇条書きで指摘してください。問題なければ「指摘事項なし」としてください。
+                        """
+                        
+                        # 画像解析実行
+                        response = model.generate_content([image, prompt])
+                        
+                        st.success("解析完了")
+                        st.markdown("### 📊 画像判定レポート")
+                        st.markdown(response.text)
+                        
+                    except Exception as e:
+                        st.error(f"エラーが発生しました: {e}")
 
-            # 5. 解析実行（ここからリトライ機能）
-            status_text.text("ナレッジベースと照合中...")
-            progress_bar.progress(60)
+        # --- 動画の場合 ---
+        elif "video" in file_type:
+            st.video(uploaded_file)
             
-            # 診断リストにあった安定版モデルを指定
-            model = genai.GenerativeModel(model_name="gemini-flash-latest")
-            
-            prompt = f"""
-            あなたは放送局の厳格な品質管理AIです。
-            以下の「ナレッジベース（ルール）」に基づき、アップロードされた動画の映像・テロップを解析してください。
-            
-            ■前提条件
-            - 音声はチェック不要です（無音コンテンツのため）。視覚情報のみで判断してください。
-            - ナレッジベースに記載されたルール違反を徹底的に抽出してください。
+            if st.button("🚀 動画チェックを実行", type="primary"):
+                status_text = st.empty()
+                progress_bar = st.progress(0)
 
-            ■ナレッジベース
-            {current_knowledge}
+                try:
+                    current_knowledge = load_knowledge_base()
+                    
+                    # 保存とアップロード
+                    status_text.text("AIサーバーへ転送中...")
+                    progress_bar.progress(20)
+                    temp_file_path = "temp_video.mp4"
+                    with open(temp_file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    video_file = genai.upload_file(path=temp_file_path)
 
-            ■出力形式
-            以下のMarkdownテーブル形式のみで出力してください。
-            
-            | タイムコード | 判定(NG/注意) | 指摘内容 | 該当ナレッジ |
-            | :--- | :--- | :--- | :--- |
-            """
+                    # 処理待ち
+                    while video_file.state.name == "PROCESSING":
+                        status_text.text("映像処理中... (数分かかる場合があります)")
+                        time.sleep(2)
+                        video_file = genai.get_file(video_file.name)
 
-            # --- リトライロジック ---
+                    if video_file.state.name == "FAILED":
+                        st.error("動画処理に失敗しました。")
+                        st.stop()
+
+                    # 解析実行
+                    status_text.text("ナレッジベースと照合中...")
+                    progress_bar.progress(60)
+                    
+                    model = genai.GenerativeModel(model_name="gemini-flash-latest")
+                    
+                    prompt = f"""
+                    あなたはTTVの厳格な校閲・コンプライアンス担当AIです。
+                    以下のナレッジベースに基づき動画を解析してください。
+
+                    ■ナレッジベース
+                    {current_knowledge}
+
+                    ■出力形式 (Markdownテーブル)
+                    | タイムコード | 判定(NG/注意) | 指摘内容 | 該当ナレッジ |
+                    | :--- | :--- | :--- | :--- |
+                    """
+
+                    try:
+                        response = model.generate_content([video_file, prompt])
+                    except exceptions.ResourceExhausted:
+                        status_text.warning("⚠️ アクセス集中。30秒待機して再試行します...")
+                        time.sleep(30)
+                        status_text.text("再試行中...")
+                        response = model.generate_content([video_file, prompt])
+                    
+                    progress_bar.progress(100)
+                    status_text.text("完了")
+                    
+                    st.divider()
+                    st.markdown("### 📊 動画判定レポート")
+                    st.markdown(response.text)
+
+                    # 掃除
+                    genai.delete_file(video_file.name)
+                    os.remove(temp_file_path)
+
+                except Exception as e:
+                    st.error(f"システムエラー: {e}")
+
+# =========================================================
+# タブ2：コンプラ相談チャット
+# =========================================================
+with tab2:
+    st.subheader("💬 AIコンプライアンス相談室")
+    st.caption("「この表現は大丈夫？」「常用漢字か教えて」など、制作中の疑問をAIに相談できます。")
+
+    # チャット履歴の初期化
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # 履歴の表示
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # ユーザー入力
+    if prompt := st.chat_input("質問を入力してください..."):
+        # ユーザーのメッセージを表示
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # AIの回答生成
+        with st.chat_message("assistant"):
             try:
-                response = model.generate_content([video_file, prompt])
-            except exceptions.ResourceExhausted:
-                # 429エラーが出たらここに来る
-                status_text.warning("⚠️ アクセス集中(Quota)のため、30秒待機してから再試行します...")
-                time.sleep(30) # 30秒待つ
-                status_text.text("再試行中...")
-                response = model.generate_content([video_file, prompt]) # もう一度トライ
-            # ---------------------
-            
-            # 6. 結果表示
-            progress_bar.progress(100)
-            status_text.text("完了")
-            
-            st.divider()
-            st.subheader("📊 解析レポート")
-            st.markdown(response.text)
-
-            # ファイル削除
-            genai.delete_file(video_file.name)
-            os.remove(temp_file_path)
-
-        except Exception as e:
-            st.error(f"システムエラーが発生しました: {e}")
+                current_knowledge = load_knowledge_base()
+                model = genai.GenerativeModel(model_name="gemini-flash-latest")
+                
+                # チャット用プロンプト（ナレッジベースを背景知識として持たせる）
+                system_instruction = f"""
+                あなたはTTVの放送規定に詳しい「コンプライアンス・アドバイザー」です。
+                以下のナレッジベース（規定）を熟知しています。
+                ユーザーの質問に対し、この規定に基づいて的確にアドバイスをしてください。
+                規定にないことでも、一般的な放送倫理やリスク管理の観点から回答してください。
+                
+                ■ナレッジベース
+                {current_knowledge}
+                """
+                
+                # 会話履歴を含めて送信（文脈維持のため）
+                chat = model.start_chat(history=[])
+                # ※簡易化のため、毎回システムプロンプト+直近の質問で問い合わせる形式にします
+                full_prompt = f"{system_instruction}\n\nユーザーの質問: {prompt}"
+                
+                response = model.generate_content(full_prompt)
+                
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                
+            except Exception as e:
+                st.error(f"エラー: {e}")
